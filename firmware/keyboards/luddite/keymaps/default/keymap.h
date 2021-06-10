@@ -24,6 +24,9 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 #include "Key.h"
 #include <array>
 
+#define ENABLE_AUDIO
+#include "BlueMicro_tone.h"
+
 #ifndef KEYMAP_H
 #define KEYMAP_H
 
@@ -34,8 +37,27 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 #define _L2  2
 #define _L3  3
 
+#define CBR_FN   MC(KC_H)
+#define BRC_FN   MC(KC_I)
+#define PRN_FN   MC(KC_J)
+#define IPADDR   MC(KC_U)
+#define SMILE    MC(KC_V)
+#define GITCOMMIT MC(KC_X)
+#define CHARGE    MC(KC_Y)
+#define BIRTHDAY  MC(KC_Z)
+
+#ifdef ENABLE_AUDIO
+extern BlueMicro_tone speaker; 
+#endif
+
 void setupKeymap();
 extern std::array<std::array<Key, MATRIX_COLS>, MATRIX_ROWS> matrix;
+
+#define USER_MACRO_FUNCTION   0 
+void process_user_macros(uint16_t macroid);
+
+extern void addStringToQueue(const char* str);
+extern void addKeycodeToQueue(const uint16_t keycode);
 
 #endif /* KEYMAP_H */
 

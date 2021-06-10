@@ -19,8 +19,10 @@ uint8_t testlink(uint8_t setpin, uint8_t readpin)
   pinMode(setpin, OUTPUT);
   pinMode(readpin, INPUT_PULLDOWN);
   digitalWrite(setpin, LOW);
+ // delay(1);
   uint8_t initial = digitalRead(readpin);
   digitalWrite(setpin, HIGH);
+ // delay(1);
   uint8_t final = digitalRead(readpin);
   pinMode(setpin, INPUT);
   pinMode(readpin, INPUT);
@@ -82,14 +84,18 @@ void matrix_key_end(bool singlekey)
 //*************************************************************************
 void matrix_key_test(bool singlekey)
 {
-    #ifdef NRF52840_XXAA
-    // below tests all nrf52840 GPIOs except 32kHz xtal and reset
-    uint8_t pins[]    = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,  19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47   };
-    
-    #else
-    // below tests all nrf52832 GPIOs except 32kHz xtal and reset
-    uint8_t pins[]    = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31   };
-    #endif
+#ifdef NRF52840_XXAA
+  #ifdef ARDUINO_NICE_NANO
+  //Use this for nicenano - 14 and 16 are connected to 18 - reset line
+  uint8_t pins[]    = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,  15,  17,  19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47   };
+  #else
+  // below tests all nrf52840 GPIOs except 32kHz xtal and reset
+  uint8_t pins[]    = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,  19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47   };
+  #endif
+#else
+  // below tests all nrf52832 GPIOs except 32kHz xtal and reset
+  uint8_t pins[]    = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31   };
+#endif
 
     uint8_t pincount = sizeof(pins)/sizeof(pins[0]);
     
@@ -176,5 +182,5 @@ void loop()
 matrix_key_test(true);
 matrix_key_end(true);
 
-delay(2000);
+delay(100);
 }

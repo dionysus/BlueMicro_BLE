@@ -1,5 +1,5 @@
 /*
-Copyright 2018-2020 <Pierre Constantineau, Julian Komaromy>
+Copyright 2018-2021 <Pierre Constantineau, Julian Komaromy>
 
 3-Clause BSD License
 
@@ -18,56 +18,11 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 
 */
 #include "KeyScanner.h"
-#include <tuple>
-
-// ToDo: There seems to be lots of redundency in data.
-// ToDo: consider interrupts or GPIOTE
-// ToDo: there must be a better way to debounce
-// ToDo: consider multiple boards and the merging of multiple buffers/modifiers and layer requests.
 
 
-
-
-KeyScanner::KeyScanner() {    // Constructor
-    ;
-}
-
-
-/**************************************************************************************************************************/
-// KEY SCANNING - THIS ROUTINE ONLY TAKES CARE OF THE DEBOUNCING LOGIC FOR EACH KEY
-/**************************************************************************************************************************/
-bool KeyScanner::scanMatrix(const int& currentState,unsigned long currentMillis, const int& row, const int& col)
-{
-    // 
-#if DIODE_DIRECTION == COL2ROW
-        if (currentState == 0 ) //if key pressed
-#else
-        if (currentState == 1 ) //if key pressed
-#endif
-        {
-            if (timestamps[row][col] > 0) //if key was previously pressed
-            {
-                if((currentMillis - timestamps[row][col]) >= DEBOUNCETIME)
-                {
-                    matrix[row][col].press(currentMillis);
-                    lastPressed = currentMillis;
-                }
-                else // not enough debounce time
-                {
-                    ; // do nothing
-                }
-            }
-
-            else //if key was NOT previously pressed
-            {
-                timestamps[row][col] = currentMillis;
-            }
-        }
-        else // key not pressed
-        {
-            matrix[row][col].clear(currentMillis);
-            timestamps[row][col] = 0;
-        }
+KeyScanner::KeyScanner(PersistentState* cfg, DynamicState* stat) {    // Constructor
+    config=cfg;
+    status=stat;
 }
 
 /**************************************************************************************************************************/
@@ -88,7 +43,7 @@ void KeyScanner::release(unsigned long currentMillis, const int& row, const int&
 /**************************************************************************************************************************/
 // Called by callback function when remote data is received
 /**************************************************************************************************************************/
-void KeyScanner::updateRemoteLayer(uint8_t data)
+void KeyScanner::updateRemoteLayer(uint16_t data)
 {
     remoteLayer = data;
 }
@@ -113,15 +68,16 @@ void KeyScanner::updateRemoteReport(uint8_t data0, uint8_t data1, uint8_t data2,
 
 /**************************************************************************************************************************/
 void KeyScanner::resetReport() {
-    bufferposition = 1;
+    bufferposition = 0;
     currentMod = 0;
-    currentReport[0] = 0;
-    currentReport[1] = 0;
-    currentReport[2] = 0;
-    currentReport[3] = 0;
-    currentReport[4] = 0;
-    currentReport[5] = 0;
-    currentReport[6] = 0;
+    currentReport.keycode[0] = 0;
+    currentReport.keycode[1] = 0;
+    currentReport.keycode[2] = 0;
+    currentReport.keycode[3] = 0;
+    currentReport.keycode[4] = 0;
+    currentReport.keycode[5] = 0;
+    currentReport.modifier = 0;
+    currentReport.layer = 0;
 }
 
 
@@ -132,14 +88,14 @@ void KeyScanner::copyRemoteReport()
     resetReport();
 #else
     currentMod = remoteMod;
-    //       currentReport[0] = remoteReport[0];
-    bufferposition = 1;
-    if (remoteReport[1]>0){currentReport[bufferposition] = remoteReport[1]; bufferposition++; }
-    if (remoteReport[2]>0){currentReport[bufferposition] = remoteReport[2]; bufferposition++; }
-    if (remoteReport[3]>0){currentReport[bufferposition] = remoteReport[3]; bufferposition++; }
-    if (remoteReport[4]>0){currentReport[bufferposition] = remoteReport[4]; bufferposition++; }
-    if (remoteReport[5]>0){currentReport[bufferposition] = remoteReport[5]; bufferposition++; }
-    if (remoteReport[6]>0){currentReport[bufferposition] = remoteReport[6]; bufferposition++; }
+    currentReport.modifier = remoteMod;
+    bufferposition = 0;
+    if (remoteReport[1]>0){currentReport.keycode[bufferposition] = remoteReport[1]; bufferposition++; }
+    if (remoteReport[2]>0){currentReport.keycode[bufferposition] = remoteReport[2]; bufferposition++; }
+    if (remoteReport[3]>0){currentReport.keycode[bufferposition] = remoteReport[3]; bufferposition++; }
+    if (remoteReport[4]>0){currentReport.keycode[bufferposition] = remoteReport[4]; bufferposition++; }
+    if (remoteReport[5]>0){currentReport.keycode[bufferposition] = remoteReport[5]; bufferposition++; }
+    if (remoteReport[6]>0){currentReport.keycode[bufferposition] = remoteReport[6]; bufferposition++; }
 #endif
 }
 
@@ -168,19 +124,27 @@ void KeyScanner::updateBuffer()
     activeKeys.clear();
     bool emptyOneshot = false;
     //bool emptyOneshotLayer = false;
+    std::copy(encoderKeys.begin(), encoderKeys.end(), back_inserter(activeKeys));
+    //for (auto keycode : encoderKeys) //Consider using std::copy algorithm instead of a raw loop.
+   // {
+   //   activeKeys.push_back(keycode);
+   // }
 
+    encoderKeys.clear();
 
 // call the tri layer functions...
 process_user_layers(detectedlayerkeys);
 
 uint8_t layer = getlayer(detectedlayerkeys);
 
+status->layer = layer;
+
     for(int row = 0; row < MATRIX_ROWS; ++row) {
         for (auto& key : matrix[row]) 
         {
-            uint16_t activeKeycode;
-            Duration duration;
-            std::tie(activeKeycode, duration) = key.getActiveActivation(layer);
+            KeyDefinition activeKey = key.getActiveActivation(layer);
+            uint16_t activeKeycode = activeKey.activations;
+            Duration duration = activeKey.durations;
 
             if (activeKeycode != 0) 
             {
@@ -242,19 +206,10 @@ uint8_t layer = getlayer(detectedlayerkeys);
      */
     
     std::copy(toggleBuffer.begin(), toggleBuffer.end(), back_inserter(activeKeys));
-   /* for (auto activation : toggleBuffer) 
-    {
-        activeKeys.push_back(activation);
-    }*/
 
     if (emptyOneshot) 
     {
-        std::copy(oneshotBuffer.begin(), oneshotBuffer.end(), back_inserter(activeKeys));
-       /* for (auto activation : oneshotBuffer) 
-        {
-            activeKeys.push_back(activation);
-        }*/
-        
+        std::copy(oneshotBuffer.begin(), oneshotBuffer.end(), back_inserter(activeKeys));        
         oneshotBuffer.clear();
         oneshotLayer = 0;
     }
@@ -271,6 +226,10 @@ void KeyScanner::process_for_tri_layers(uint8_t if_layer1, uint8_t and_layer2, u
     detectedlayerkeys = (detectedlayerkeys & mask12) == mask12 ? ((detectedlayerkeys & ~mask12) | mask3) : (detectedlayerkeys); // if detectedlayerkeys has mask12 in it,remove mask12 and add extra layer; otherwise return as is.
 }
 
+void KeyScanner::add_to_encoderKeys(uint16_t keycode)
+{
+    encoderKeys.push_back(keycode);
+}
 
 #if USER_LAYER_FUNCTION == 1 
 void process_user_layers(uint16_t layermask)
@@ -285,6 +244,10 @@ bool KeyScanner::updateLayer()
 {
     uint16_t prevlayer = localLayer;                    // remember last layer mask
     detectedlayerkeys = localLayer | remoteLayer | oneshotLayer; // merge the layer masks
+    // TODO: check is remotelayer being sent/received is a bitmasked layer
+    // oneshotLayer is a bitmasked layer
+    // localLayer is a bitmasked layer
+
     
     // read through the matrix and select all of the 
     // currently pressed keys 
@@ -307,7 +270,7 @@ bool KeyScanner::updateLayer()
         }
     }
     
-
+    
     layerChanged = (prevlayer != localLayer);
     return layerChanged;
 }
@@ -317,14 +280,7 @@ bool KeyScanner::updateLayer()
 
 bool KeyScanner::getReport()
 {
-    previousReport[0] = currentReport[0];
-    previousReport[1] = currentReport[1];
-    previousReport[2] = currentReport[2];
-    previousReport[3] = currentReport[3];
-    previousReport[4] = currentReport[4];
-    previousReport[5] = currentReport[5];
-    previousReport[6] = currentReport[6];
-    previousReport[7] = currentReport[7];
+    previousReport = currentReport;
 
     resetReport();
     copyRemoteReport();
@@ -334,6 +290,83 @@ bool KeyScanner::getReport()
         remotespecialkeycode=0;
     }
 
+    #ifdef ENABLE_COMBOS
+        // process single-key substs (macros) first.
+        if (combos.anyMacrosConfigured())
+        {
+            if(combos.anyMacrosActive(activeKeys))
+            {
+                activeKeys = combos.processActiveMacros(activeKeys);
+            }
+        }
+
+        // process combos before generating HID reports
+        if (combos.anyCombosConfigured())
+        { 
+            uint8_t triggercount = combos.countActiveCombosKeys(activeKeys);
+            if  (triggercount>1)// we have a potential combo present
+            {
+                uint8_t activecount = combos.findActiveCombos(activeKeys);
+                if (activecount>0) // at least 1
+                {
+                    if (activecount==1) // exactly 1
+                    {
+                        activeKeys = combos.processActiveKeycodewithCombos(activeKeys);
+                        combotimer = status->timestamp;  // reset timers to current timestamp.
+                        triggerkeytimer = status->timestamp;
+                    }
+                    else // more than 2
+                    {
+                        if (status->timestamp - combotimer > 200)// timeout to send biggest one...
+                        {
+                            activeKeys = combos.processActiveKeycodewithCombos(activeKeys);
+                            combotimer = status->timestamp;  // reset timers to current timestamp.
+                            triggerkeytimer = status->timestamp;
+                        }
+                        else // we are still transitioning remove all potential combo keys...
+                        {
+                            activeKeys = combos.processActiveKeycodewithComboKeys(activeKeys);
+                        }
+                    }
+                }
+                else
+                { // if none are active, we might have to remove keycodes in case we are transitionning to/from a combo 
+                    if (status->timestamp - combotimer < 75)// Transitionning out of a combo
+                    {
+                        activeKeys = combos.processActiveKeycodewithComboKeys(activeKeys); 
+                    }
+                }
+            }
+            else
+            {
+            if (triggercount==1) // we have a key used in a combo being pressed
+            {
+                // check if we have a "mono"
+                /* if (combos.findActiveCombos(activeKeys)) // at least 1
+                    {
+                        if (combos.keycodebuffertosend.empty()) // buffer has stuff in it - skip adding the "mono"
+                        {
+                        activeKeys = combos.processActiveKeycodewithCombos(activeKeys);
+                        combotimer = status->timestamp;  // reset timers to current timestamp.
+                        triggerkeytimer = status->timestamp;
+                        }
+                    }
+                    else */
+                    if (status->timestamp - triggerkeytimer < 75)// Transitionning out/in of a combo
+                    {
+                        activeKeys = combos.processActiveKeycodewithComboKeys(activeKeys); 
+                    }
+            }
+            else
+            {
+                    triggerkeytimer = status->timestamp;
+                    combotimer = status->timestamp;
+            }
+            }    
+        }
+
+    #endif
+
     for (auto keycode : activeKeys) 
     {
         auto hidKeycode = static_cast<uint8_t>(keycode & 0x00FF);
@@ -341,8 +374,8 @@ bool KeyScanner::getReport()
 
         if (hidKeycode >= KC_A && hidKeycode <= KC_EXSEL)
         {
-            currentReport[bufferposition] = hidKeycode;
-            ++bufferposition;
+            currentReport.keycode[bufferposition] = hidKeycode;
+            bufferposition++;
         }
         
         //check if the hid keycode contains a modifier. // also check for macros.
@@ -365,41 +398,42 @@ bool KeyScanner::getReport()
         }
         //add all of the extra modifiers into the curren modifier 
         currentMod |= extraModifiers;
-        if (bufferposition == 7)
+        if (bufferposition == 6)
         {
-            bufferposition = 1;
+            bufferposition = 0;
         }
     }
 
-    currentReport[0] = currentMod;
-    currentReport[7] = localLayer;
+    currentReport.modifier = currentMod;
+    currentReport.layer = localLayer;
+    
 
 if (activeKeys.empty() && processingmacros) {processingmacros = false;}
 
-   if((currentReport[0] != previousReport[0])
-        | (currentReport[1] != previousReport[1])
-         | (currentReport[2] != previousReport[2])
-          | (currentReport[3] != previousReport[3])
-           | (currentReport[4] != previousReport[4])
-            | (currentReport[5] != previousReport[5])
-             | (currentReport[6] != previousReport[6])
-              | (currentReport[7] != previousReport[7]))
+   if(currentReport  != previousReport) 
     {
         reportChanged = true;
+        status->lastreporttime = status->timestamp;
         if (processingmacros)
-            if ((currentReport[0] == 0 )
-                && (currentReport[1] == 0 )
-                && (currentReport[2] == 0 )
-                && (currentReport[3] == 0 )
-                && (currentReport[4] == 0 )
-                && (currentReport[5] == 0 )
-                && (currentReport[6] == 0 ))
+            if ((currentReport.modifier == 0 )
+                && (currentReport.keycode[0] == 0 )
+                && (currentReport.keycode[1] == 0 )
+                && (currentReport.keycode[2] == 0 )
+                && (currentReport.keycode[3] == 0 )
+                && (currentReport.keycode[4] == 0 )
+                && (currentReport.keycode[5] == 0 ))
             {processingmacros=false; macro=0; specialfunction=0; consumer=0; mouse=0;}
     }
     else
     {reportChanged = false;
     
     }
+    if ((status->timestamp)-(status->lastreporttime) > 125) // make sure we have at least 1 report every 125 ms even if we don't type.
+    {
+        reportChanged = true;
+        status->lastreporttime = status->timestamp;
+    } 
+
 
     return reportChanged;
 }
@@ -410,9 +444,11 @@ unsigned long KeyScanner::getLastPressed()
 }
 /**************************************************************************************************************************/
 
-uint8_t KeyScanner::currentReport[8] = {0, 0, 0 ,0, 0, 0, 0, 0}; 
+HIDKeyboard KeyScanner::currentReport = {0, {0, 0 ,0, 0, 0, 0}, 0}; 
+HIDKeyboard KeyScanner::previousReport = {0, {0, 0 ,0, 0, 0, 0}, 0}; 
+
 uint8_t KeyScanner::remoteReport[8]  = {0, 0, 0 ,0, 0, 0, 0, 0}; 
-uint8_t KeyScanner::previousReport[8] = {0, 0, 0 ,0, 0, 0, 0, 0};
+
 bool    KeyScanner::layerChanged = false;
 bool    KeyScanner::reportChanged = false;
 bool    KeyScanner::processingmacros = false;
@@ -425,16 +461,20 @@ uint16_t KeyScanner::mouse = 0;
 uint16_t KeyScanner::special_key = 0;
 uint16_t KeyScanner::remoteLayer = 0;
 uint16_t KeyScanner::remotespecialkeycode = 0;
+uint32_t KeyScanner::combotimer = 0;
+uint32_t KeyScanner::triggerkeytimer = 0;
 
 uint16_t KeyScanner::oneshotLayer = 0;
 uint8_t KeyScanner::remoteMod = 0;
 uint8_t KeyScanner::currentMod = 0;
-unsigned long KeyScanner::timestamps[MATRIX_ROWS][MATRIX_COLS]  = {0};
 unsigned long KeyScanner::lastPressed = 0;
 uint8_t KeyScanner::bufferposition = 0;
-//uint8_t KeyScanner::layerMode = 0;
 std::vector<uint16_t> KeyScanner::activeKeys {};
+std::vector<uint16_t> KeyScanner::encoderKeys {};
 std::vector<uint16_t> KeyScanner::macroBuffer {};
 std::vector<uint16_t> KeyScanner::toggleBuffer {};
 std::vector<uint16_t> KeyScanner::leaderBuffer {};
 std::vector<uint16_t> KeyScanner::oneshotBuffer {};
+
+PersistentState*  KeyScanner::config = NULL;
+DynamicState*  KeyScanner::status  = NULL;
